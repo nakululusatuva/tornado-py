@@ -30,13 +30,15 @@ class MerkleTree(object):
         self.capacity   : int = 2 ** height
         if len(self.leafs) > self.capacity:
             raise Exception(f'Leafs count exceeds capacity: {len(self.leafs)} > {self.capacity}')
-        if len(self.leafs) == 0:
-            self.add(MerkleTree.ZERO_VALUE)
-        else:
-            for leaf in self.leafs:
-                self.add(leaf)
 
-    def root(self) -> HexBytes:
+    '''
+    Get root value
+    @return HexBytes of root value
+            None if tree is empty
+    '''
+    def root(self) -> HexBytes | None:
+        if len(self.leafs) == 0:
+            return None
         return self.layers[-1][0]
 
     '''
@@ -61,7 +63,7 @@ class MerkleTree(object):
                 node_left : HexBytes = self.layers[i][node_index]
                 node_right: HexBytes = MerkleTree.ZERO_VALUE
             else:
-                node_left : HexBytes = self.leaf(node_index - 1)
+                node_left : HexBytes = self.layers[i][node_index - 1]
                 node_right: HexBytes = self.layers[i][node_index]
             node_index //= 2
             path.append((node_left, node_right))
@@ -74,7 +76,7 @@ class MerkleTree(object):
     '''
     def add(self, leaf: HexBytes) -> bool:
         # Check if legal
-        if int.from_bytes(leaf) >= int.from_bytes(MerkleTree.FILED_SIZE):
+        if int.from_bytes(leaf, byteorder='big') >= int.from_bytes(MerkleTree.FILED_SIZE, byteorder='big'):
             Log.Error(self.TAG, f'Leaf value out of range: {leaf.to_0x_hex()}')
             return False
         elif len(self.leafs) >= self.capacity:
