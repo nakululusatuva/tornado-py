@@ -1,0 +1,9 @@
+[submodule "Circom"]
+	path = Circom
+	url = git@github.com:iden3/circom.git
+[submodule "CircomLib"]
+	path = CircomLib
+	url = git@github.com:iden3/circomlib.git
+[submodule "RapidSnark"]
+	path = RapidSnark
+	url = git@github.com:iden3/rapidsnark.git
