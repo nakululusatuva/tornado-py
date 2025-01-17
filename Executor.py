@@ -1,4 +1,3 @@
-import random
 import threading as TR
 from typing import Callable
 
@@ -16,31 +15,33 @@ class Job:
 class TaskQueue:
 
     def __init__(self) -> None:
-        self.TAG     : str          = __class__.__name__
-        self.turn_off: bool         = True
-        self.cond    : TR.Condition = TR.Condition()
-        self.worker  : TR.Thread    = None
-        self.queue   : list[Job]    = []
+        self.TAG   : str          = __class__.__name__
+        self.off   : bool         = True
+        self.cond  : TR.Condition = TR.Condition()
+        self.worker: TR.Thread    = None
+        self.queue : list[Job]    = []
 
     def start(self) -> None:
-        if not self.turn_off:
+        if not self.off:
             Log.Warn(self.TAG, 'start() already started')
             return
-        self.turn_off = False
-        self.worker = TR.Thread(target=self.loop)
+        self.off = False
+        self.worker = TR.Thread(target=self._loop)
         self.worker.start()
         self.run_sync(Job('TaskQueue', lambda: Log.Info(self.TAG, 'start()')))
+        Log.Debug(self.TAG, "start() done")
 
     def stop(self) -> None:
-        if self.turn_off:
+        if self.off:
             Log.Warn(self.TAG, 'stop() already stopped')
             return
-        Log.Info(self.TAG, 'stop() shutting down')
-        self.turn_off = True
+        Log.Debug(self.TAG, 'stop() shutting down')
+        self.off = True
         with self.cond:
             self.cond.notify_all()
         self.worker.join()
-        Log.Info(self.TAG, 'stop() done')
+        self.worker = None
+        Log.Debug(self.TAG, 'stop() done')
 
     def queue_size(self, lock: bool) -> int:
         if lock:
@@ -49,16 +50,35 @@ class TaskQueue:
         else:
             return int(len(self.queue))
 
-    def loop(self) -> None:
+    def run_sync(self, job: Job) -> bool:
+        if self.off:
+            Log.Warn(self.TAG, 'run_sync(), queue is stopped')
+            return False
+        with self.cond:
+            self.queue.append(job)
+            self.cond.notify_all()
+        job.done.wait()
+        return True
+
+    def run_async(self, job: Job) -> bool:
+        if self.off:
+            Log.Warn(self.TAG, 'run_async(), queue is turned off')
+            return False
+        with self.cond:
+            self.queue.append(job)
+            self.cond.notify_all()
+        return True
+
+    def _loop(self) -> None:
         while True:
             # Get task
             job: Job | None = None
             with self.cond:
                 # Stop loop if turn off and queue is empty
-                if 0 == len(self.queue) and self.turn_off:
+                if 0 == len(self.queue) and self.off:
                     break
                 # Wait for task
-                while 0 == len(self.queue) and not self.turn_off:
+                while 0 == len(self.queue) and not self.off:
                     try:
                         self.cond.wait(0.01)  # 10ms
                     except KeyboardInterrupt:
@@ -76,24 +96,5 @@ class TaskQueue:
                         try:
                             job.on_exception(e0)
                         except Exception as e1:
-                            Log.Error(self.TAG, f'During \'on_exception({e0})\' of task {job.name}, another occurred: {e1}')
+                            Log.Error(self.TAG, f'During \'on_exception({e0})\' of task {job.name}, another exception occurred: {e1}')
                 job.done.set()
-
-    def run_sync(self, job: Job) -> bool:
-        if self.turn_off:
-            Log.Warn(self.TAG, 'run_sync() queue is turned off')
-            return False
-        with self.cond:
-            self.queue.append(job)
-            self.cond.notify_all()
-        job.done.wait()
-        return True
-
-    def run_async(self, job: Job) -> bool:
-        if self.turn_off:
-            Log.Warn(self.TAG, 'run_async() queue is turned off')
-            return False
-        with self.cond:
-            self.queue.append(job)
-            self.cond.notify_all()
-        return True
