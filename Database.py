@@ -2,92 +2,12 @@ import os
 import sqlite3
 import threading as TR
 from enum import Enum
-from typing import Any
-
 from hexbytes import HexBytes
-from web3.types import Wei
+from typing import Any
 
 import Log
 from Executor import Job, TaskQueue
-from Types import Second
-
-
-class EventDeposit(object):
-
-    def __init__(self, timestamp : Second,
-                       blk_num   : int,
-                       tx_hash   : str,
-                       commitment: str,
-                       leaf_index: int) -> None:
-        self.timestamp : Second = timestamp
-        self.blk_num   : int    = blk_num
-        self.tx_hash   : str    = '0x' + tx_hash if not tx_hash.startswith('0x') else tx_hash
-        self.commitment: str    = '0x' + commitment if not commitment.startswith('0x') else commitment
-        self.leaf_index: int    = leaf_index
-
-    @staticmethod
-    def from_dict(_dict: dict) -> 'EventDeposit':
-        return EventDeposit(
-            _dict['timestamp'],
-            _dict['blk_num'],
-            _dict['tx_hash'],
-            _dict['commitment'],
-            _dict['leaf_index'])
-
-    def __str__(self) -> str:
-        return (f'timestamp={self.timestamp}, '
-                f'blk_num={self.blk_num}, '
-                f'tx_hash={self.tx_hash}, '
-                f'commitment={self.commitment}, '
-                f'leaf_index={self.leaf_index}')
-
-    def __dict__(self) -> dict:
-        return {
-            'timestamp' : self.timestamp,
-            'blk_num'   : self.blk_num,
-            'tx_hash'   : self.tx_hash,
-            'commitment': self.commitment,
-            'leaf_index': self.leaf_index,
-        }
-
-
-class EventWithdraw(object):
-
-    def __init__(self, blk_num       : int,
-                       tx_hash       : str,
-                       nullifier_hash: str,
-                       to            : str,
-                       fee           : Wei) -> None:
-        self.blk_num       : int = blk_num
-        self.tx_hash       : str = '0x' + tx_hash if not tx_hash.startswith('0x') else tx_hash
-        self.nullifier_hash: str = '0x' + nullifier_hash if not nullifier_hash.startswith('0x') else nullifier_hash
-        self.to            : str = '0x' + to if not to.startswith('0x') else to
-        self.fee           : Wei = fee
-
-    @staticmethod
-    def from_dict(_dict: dict) -> 'EventWithdraw':
-        return EventWithdraw(
-            _dict['blk_num'],
-            _dict['tx_hash'],
-            _dict['nullifier_hash'],
-            _dict['to'],
-            _dict['fee'])
-
-    def __str__(self) -> str:
-        return (f'blk_num={self.blk_num}, '
-                f'tx_hash={self.tx_hash}, '
-                f'nullifier_hash={self.nullifier_hash}, '
-                f'to={self.to}, '
-                f'fee={self.fee}')
-
-    def __dict__(self) -> dict:
-        return {
-            'blk_num'       : self.blk_num,
-            'tx_hash'       : self.tx_hash,
-            'nullifier_hash': self.nullifier_hash,
-            'to'            : self.to,
-            'fee'           : self.fee,
-        }
+from Types import EventDeposit, EventWithdraw
 
 
 TABLE_STRUCTURE: dict = {
@@ -100,8 +20,8 @@ TABLE_STRUCTURE: dict = {
         'types'  : ['INTEGER', 'TEXT', 'TEXT', 'TEXT', 'INTEGER'],
     },
     'Info': {
-        'columns': ['latest_blk_num', 'unspent'],
-        'types'  : ['INTEGER', 'INTEGER'],
+        'columns': ['latest_blk_num', 'latest_leaf_index', 'unspent'],
+        'types'  : ['INTEGER', 'INTEGER', 'INTEGER'],
     }
 }
 
@@ -129,7 +49,15 @@ class InterfaceClient(object):
     @return Latest synced block number
             None if error occurred
     '''
-    def get_latest(self) -> int | None:
+    def get_latest_block(self) -> int | None:
+        raise NotImplementedError
+
+    '''
+    Get latest leaf index
+    @return Latest synced leaf index
+            None if error occurred
+    '''
+    def get_latest_leaf(self) -> int | None:
         raise NotImplementedError
 
     '''
@@ -148,6 +76,9 @@ class InterfaceClient(object):
             None if error occurred
     '''
     def get_leafs(self, index_start: int, index_end: int) -> list[HexBytes] | None:
+        raise NotImplementedError
+
+    def set_latest_block(self, block: int) -> bool:
         raise NotImplementedError
 
     def add_deposit(self, event: EventDeposit) -> bool:
@@ -222,8 +153,16 @@ class SQLiteClient(InterfaceClient):
                 self.connection = None
             self.taskq.run_sync(Job('close', _))
 
-    def get_latest(self) -> int | None:
+    def get_latest_block(self) -> int | None:
         sql: str = 'SELECT latest_blk_num FROM Info;'
+        with self.mutex:
+            result: list[int] | None = self._query(sql)
+            if result is None:
+                return None
+            return result[0]
+
+    def get_latest_leaf(self) -> int | None:
+        sql: str = 'SELECT latest_leaf_index FROM Info;'
         with self.mutex:
             result: list[int] | None = self._query(sql)
             if result is None:
@@ -246,10 +185,16 @@ class SQLiteClient(InterfaceClient):
                 return None
             return [HexBytes.fromhex(x[2:] if x.startswith('0x') else x) for x in result]
 
+    def set_latest_block(self, block: int) -> bool:
+        sql: str = f'UPDATE Info SET latest_blk_num = {block};'
+        with self.mutex:
+            return self._insert([sql])
+
     def add_deposit(self, event: EventDeposit) -> bool:
         sql: list[str] = [
             f'INSERT INTO EventDeposit VALUES ({event.timestamp}, {event.blk_num}, "{event.tx_hash}", "{event.commitment}", {event.leaf_index});',
             f'UPDATE Info SET unspent = unspent + 1;',
+            f'UPDATE Info SET latest_leaf_index = {event.leaf_index} WHERE latest_leaf_index < {event.leaf_index};',
             f'UPDATE Info SET latest_blk_num = {event.blk_num} WHERE latest_blk_num < {event.blk_num};',
         ]
         with self.mutex:

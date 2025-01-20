@@ -1,6 +1,7 @@
 import os
 import signal
 import time
+import threading as TR
 
 from Types import Second
 
@@ -19,3 +20,15 @@ def WaitInterrupt() -> None:
             time.sleep(1)
     except KeyboardInterrupt:
         pass
+
+def Sleep(interval: Second, cond: TR.Condition | None = None, interruptable: bool = True) -> None:
+    time_point: Second = Second(UnixTimestamp() + interval)
+    if cond is None:
+        cond = TR.Condition()
+    with cond:
+        while UnixTimestamp() < time_point:
+            try:
+                cond.wait(time_point - UnixTimestamp())
+            except KeyboardInterrupt:
+                if interruptable:
+                    break

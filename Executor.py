@@ -28,8 +28,7 @@ class TaskQueue:
         self.off = False
         self.worker = TR.Thread(target=self._loop)
         self.worker.start()
-        self.run_sync(Job('TaskQueue', lambda: Log.Info(self.TAG, 'start()')))
-        Log.Debug(self.TAG, "start() done")
+        self.run_sync(Job('TaskQueue', lambda: Log.Debug(self.TAG, 'start() done')))
 
     def stop(self) -> None:
         if self.off:
